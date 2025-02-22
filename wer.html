@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Production Chain Calculator</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+        .node rect { fill: steelblue; rx: 20; ry: 20; cursor: grab; }
+        .link { stroke: black; stroke-width: 2px; }
+        text { font-size: 12px; text-anchor: middle; fill: white; }
+        .label { fill: black; font-size: 10px; }
+        #controls { position: absolute; top: 10px; left: 10px; background: white; padding: 10px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <label for="resource">Select Resource:</label>
+        <select id="resource"></select>
+        <button onclick="updateGraph()">Generate</button>
+    </div>
+    <svg width="100%" height="100%"></svg>
+    <script>
+        const width = window.innerWidth, height = window.innerHeight;
+        const svg = d3.select("svg").attr("width", width).attr("height", height);
+        let buildings = {};
+
+        function parseCSV(data) {
+            buildings = {};
+            const parsedData = Papa.parse(data, { header: true, skipEmptyLines: true }).data;
+            parsedData.forEach(row => {
+                let inputs = [];
+                for (let i = 1; i <= 5; i++) {
+                    if (row[`Input ${i}`] && row[`No.`]) {
+                        inputs.push({ name: row[`Input ${i}`], qty: parseFloat(row[`No.`]) });
+                    }
+                }
+                let outputs = [];
+                for (let i = 1; i <= 2; i++) {
+                    if (row[`Output ${i}`] && row[`No.`]) {
+                        outputs.push({ name: row[`Output ${i}`], qty: parseFloat(row[`No.`]) });
+                    }
+                }
+                outputs.forEach(output => {
+                    if (!buildings[output.name]) buildings[output.name] = [];
+                    buildings[output.name].push({ id: row.Building, inputs, output });
+                });
+            });
+            populateResourceDropdown();
+        }
+
+        function populateResourceDropdown() {
+            const resourceSelect = document.getElementById("resource");
+            resourceSelect.innerHTML = "";
+            Object.keys(buildings).forEach(resource => {
+                let option = document.createElement("option");
+                option.value = resource;
+                option.textContent = resource;
+                resourceSelect.appendChild(option);
+            });
+        }
+
+        function generateData(resource) {
+            const nodes = [], links = [];
+            const factoryCount = 10;
+
+            buildings[resource].forEach(building => {
+                nodes.push({ id: building.id, width: 140, height: 40 });
+                building.inputs.forEach(input => {
+                    const inputId = `${input.name}`;
+                    if (!nodes.find(n => n.id === inputId)) {
+                        nodes.push({ id: inputId, width: 100, height: 40 });
+                    }
+                    links.push({ source: inputId, target: building.id, label: `${input.qty * factoryCount} ${input.name}` });
+                });
+            });
+            return { nodes, links };
+        }
+
+        function updateGraph() {
+            const selectedResource = document.getElementById("resource").value;
+            const data = generateData(selectedResource);
+            svg.selectAll("*").remove();
+
+            const simulation = d3.forceSimulation(data.nodes)
+                .force("link", d3.forceLink(data.links).id(d => d.id).distance(200))
+                .force("charge", d3.forceManyBody().strength(-500))
+                .force("center", d3.forceCenter(width / 2, height / 2));
+
+            const link = svg.selectAll(".link")
+                .data(data.links)
+                .enter().append("line")
+                .attr("class", "link");
+
+            const node = svg.selectAll(".node")
+                .data(data.nodes)
+                .enter().append("g")
+                .attr("class", "node")
+                .call(d3.drag()
+                    .on("start", dragStarted)
+                    .on("drag", dragged)
+                    .on("end", dragEnded));
+
+            node.append("rect")
+                .attr("width", d => d.width)
+                .attr("height", d => d.height)
+                .attr("x", d => -d.width / 2)
+                .attr("y", d => -d.height / 2);
+
+            node.append("text")
+                .text(d => d.id)
+                .attr("dy", 5);
+
+            const linkLabels = svg.selectAll(".label")
+                .data(data.links)
+                .enter().append("text")
+                .attr("class", "label")
+                .text(d => d.label);
+
+            simulation.on("tick", () => {
+                link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+                node.attr("transform", d => `translate(${d.x},${d.y})`);
+                linkLabels.attr("x", d => (d.source.x + d.target.x) / 2)
+                    .attr("y", d => (d.source.y + d.target.y) / 2);
+            });
+        }
+
+        function dragStarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragEnded(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        fetch("building.csv")
+            .then(response => response.text())
+            .then(data => parseCSV(data));
+    </script>
+</body>
+</html>
