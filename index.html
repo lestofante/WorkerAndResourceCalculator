@@ -280,7 +280,7 @@
                 const buildings = resourceOutputMap[resource] || [];
                 const dialog = document.getElementById('buildingSelection');
                 const optionsContainer = document.getElementById('buildingOptions');
-                document.getElementById('buildingSelectionMessage').innerHTML = `To produce ${qty} of ${resource}`
+                document.getElementById('buildingSelectionMessage').innerHTML = `To produce ${qty.toFixed(2)} of ${resource}`
                 optionsContainer.innerHTML = '';
 
                 buildings.forEach(buildingId => {
@@ -290,7 +290,7 @@
                     div.className = 'building-option';
                     div.innerHTML = `
                         <strong>${building.name}</strong><br>
-                        Produces: ${output.qty} ${resource}<br>
+                        Produces: ${output.qty.toFixed(2)} ${resource}<br>
                         Required buildings: ${Math.ceil(qty / output.qty)}<br>
                         Power: ${building.power || 0}<br>
                         Water: ${building.water || 0}<br>
@@ -321,13 +321,13 @@
             console.log(`processResourceWithBuilding ${res} ${qty} -  ${selectedBuildingId}`);
             if (selectedBuildingId) {
                 const building = buildingsMapById[selectedBuildingId];
-                const numberOfBuilding = Math.ceil(qty / building.outputs[res].qty);
+                const percentageOfWorkingBuilding = (qty / building.outputs[res].qty)*100;
 
                 if (!insertedBuildings.has(building.id)){
                     insertedBuildings.add(building.id);
                     nodes.add({
                         id: building.id,
-                        label: `${building.id}\nx${numberOfBuilding}`,
+                        label: `${building.id}\nEfficiency: ${percentageOfWorkingBuilding.toFixed(2)}%`,
                         color: {
                             background: 'steelblue',
                             border: '#2B7CE9'
