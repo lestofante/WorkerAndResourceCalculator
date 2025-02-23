@@ -307,8 +307,7 @@
         }
 
         async function processResource(res, qty, linkInfo) {
-            let checkbox = document.getElementById('ShowPowerPlant');
-            let isChecked = checkbox.checked;
+            let isChecked = document.getElementById('ShowPowerPlant').checked;
             if (!isChecked && res == 'Power'){
                 console.log(`Power is disabled, fallback to text messages`);
                 const val = unknownResourceBuildings.get(res);
@@ -482,6 +481,11 @@
                     border: '#CC0000'
                 }
             });
+
+            if (resource == "Power"){
+                //if we selected power, make sure to enable "show poer plant"
+                document.getElementById('ShowPowerPlant').checked = true;
+            }
 
             const linkInfo = { name: resource, qty: parseFloat(quantityResourceSelect), dst: id };
             await processResource(resource, parseFloat(quantityResourceSelect), linkInfo);
