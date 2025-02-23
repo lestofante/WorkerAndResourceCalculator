@@ -40,6 +40,18 @@
             display: none;
             z-index: 2;
         }
+        #node-details-panel {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            display: none;
+            z-index: 2;
+        }
         .building-option {
             margin: 10px 0;
             padding: 10px;
@@ -64,7 +76,11 @@
         <input type="checkbox" id="ShowPowerPlant">Show power plant</checkbox>
         <button onclick="updateGraph()">Generate</button>
         <button onclick="clearSelections()">Clear Selections</button>
-        <div id="extraMessages"><h3>MESSAGES</h3>Note: an efficiency of 230% means you need 3 building, but you will have a 70% extra production if all work full efficiency</div>
+        <div id="extraMessages">
+            <h3>MESSAGES</h3>
+            Note: an efficiency of 230% means you need 3 building, but you will have a 70% extra production if all work full efficiency<br>
+            Note: light red: desired output. Dark red: unused ouput<br>
+        </div>
     </div>
     <div id="buildingSelection">
         <h3>Select Building</h3>
@@ -72,6 +88,9 @@
         <div id="buildingOptions"></div>
         <button onclick="confirmBuildingSelection()">Confirm</button>
         <button onclick="cancelBuildingSelection()">Cancel</button>
+    </div>
+    <div id="node-details-panel">
+        <h3>Building details</h3>
     </div>
     <div id="network"></div>
     <script>
@@ -100,7 +119,8 @@
                     color: 'white',
                     size: 14,
                     face: 'arial'
-                }
+                },
+                fixed: false  // Allows nodes to be moved by users
             },
             edges: {
                 arrows: {
@@ -119,35 +139,87 @@
                     inherit: false
                 },
                 smooth: {
-                    type: 'cubicBezier',
-                    forceDirection: 'horizontal',
-                    roundness: 0.4
+                    enabled: true,
+                    type: 'dynamic',  // Changed from cubicBezier for more natural edge routing
+                    roundness: 0.5
                 }
             },
             physics: {
                 enabled: true,
-                hierarchicalRepulsion: {
-                    nodeDistance: 200,
-                    centralGravity: 0.2
+                solver: 'forceAtlas2Based',  // Changed from hierarchicalRepulsion
+                forceAtlas2Based: {
+                    gravitationalConstant: -50,
+                    centralGravity: 0.01,
+                    springLength: 100,
+                    springConstant: 0.08,
+                    damping: 0.4
                 },
-                solver: 'hierarchicalRepulsion',
                 stabilization: {
-                    iterations: 1000
+                    enabled: true,
+                    iterations: 100,  // Reduced iterations for faster initial rendering
+                    updateInterval: 50
                 }
             },
+            interaction: {
+                dragNodes: true,
+                dragView: true,
+                zoomView: true
+            },
             layout: {
-                hierarchical: {
-                    direction: 'LR',
-                    sortMethod: 'directed',
-                    levelSeparation: 250,
-                    nodeSpacing: 200
-                }
+                improvedLayout: true,
+                hierarchical: false  // Disabled hierarchical layout for more flexible positioning
             }
         };
 
         function initNetwork() {
             const container = document.getElementById('network');
             network = new vis.Network(container, { nodes, edges }, options);
+
+            // Add event listeners to handle node dragging
+            network.on("dragEnd", function (params) {
+                if (params.nodes.length > 0) {
+                    const nodeId = params.nodes[0];
+                    const node = network.body.nodes[nodeId];
+                    node.options.fixed = {
+                        x: true,
+                        y: true
+                    };
+                }
+            });
+
+            network.on("doubleClick", function (params) {
+                if (params.nodes.length > 0) {
+                    const nodeId = params.nodes[0];
+                    const node = network.body.data.nodes.get(nodeId);
+
+                    // Show details panel with node information
+                    detailsPanel = document.getElementById('node-details-panel');
+                    detailsPanel.style.display = 'block';
+                    const building = buildingsMapById[nodeId];
+                    detailsPanel.innerHTML = `
+                        <strong>${building.name}</strong><br>
+                        Power: ${building.power || 0}<br>
+                        Water: ${building.water || 0}<br>
+                        Workers: ${building.workers || 0}
+                        <br>
+                        <button onclick="closeDetails()" style="
+                            margin-top: 10px;
+                            padding: 5px 10px;
+                            border: none;
+                            background: #2B7CE9;
+                            color: white;
+                            border-radius: 4px;
+                            cursor: pointer;
+                        ">Close</button>
+                    `;
+                } else {
+                    detailsPanel.style.display = 'none';
+                }
+            });
+        }
+
+        function closeDetails() {
+            detailsPanel.style.display = 'none';
         }
 
         function parseCSV(data) {
@@ -192,8 +264,9 @@
                     name: row.Building,
                     inputs: inputs,
                     outputs: outputs,
-                    water: row["Water Req"],
-                    workers: row["Number of Workers"]
+                    power: row["Power Req"] || 0,
+                    water: row["Water Req"] || 0,
+                    workers: row["Number of Workers"] || 0
                 };
                 console.dir(building, { depth: null, colors: true });
 
@@ -323,23 +396,54 @@
                 const building = buildingsMapById[selectedBuildingId];
                 const percentageOfWorkingBuilding = (qty / building.outputs[res].qty)*100;
 
-                if (!insertedBuildings.has(building.id)){
-                    insertedBuildings.add(building.id);
-                    nodes.add({
-                        id: building.id,
-                        label: `${building.id}\nEfficiency: ${percentageOfWorkingBuilding.toFixed(2)}%`,
-                        color: {
-                            background: 'steelblue',
-                            border: '#2B7CE9'
-                        }
-                    });
-                }
-
                 if (linkInfo) {
                     edges.add({
                         from: building.id,
                         to: linkInfo.dst,
                         label: `${linkInfo.name}\nx${linkInfo.qty.toFixed(1)}`
+                    });
+                }
+
+                if (insertedBuildings.has(building.id)){
+                    //todo: sum resources
+                    return;
+                }
+
+                insertedBuildings.add(building.id);
+                nodes.add({
+                    id: building.id,
+                    label: `${building.id}\nEfficiency: ${percentageOfWorkingBuilding.toFixed(2)}%`,
+                    color: {
+                        background: 'steelblue',
+                        border: '#2B7CE9'
+                    }
+                });
+
+                // Process outputs recursively
+                for (let key in building.outputs) {
+                    if (key == res){
+                        continue;
+                    }
+                    console.log(`processResourceWithBuilding ${selectedBuildingId} OUTPUT found: ${key}`);
+                    const output = building.outputs[key];
+                    const generatedOutput = (output.qty / building.outputs[res].qty) * qty;
+                    if (insertedBuildings.has(key)){
+                        //todo: sum resources
+                    }else{
+                        insertedBuildings.add(key);
+                        nodes.add({
+                            id: key,
+                            label: `${key}`,
+                            color: {
+                                background: 'darkred',
+                                border: '#2B7CE9'
+                            }
+                        });
+                    }
+                    edges.add({
+                        from: building.id,
+                        to: key,
+                        label: `${key}\nx${linkInfo.qty.toFixed(1)}`
                     });
                 }
 
