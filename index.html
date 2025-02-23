@@ -29,24 +29,26 @@
 
         function parseCSV(data) {
             buildings = {};
-            const parsedData = Papa.parse(data, { header: true, skipEmptyLines: true }).data;
+            const parsedData = Papa.parse(data, { header: true, skipEmptyLines: true, delimiter: "\t" }).data;
             parsedData.forEach(row => {
+console.log("found "+JSON.stringify(row));
                 let inputs = [];
                 for (let i = 1; i <= 5; i++) {
-                    if (row[`Input ${i}`] && row[`No.`]) {
-                        inputs.push({ name: row[`Input ${i}`], qty: parseFloat(row[`No.`]) });
+                    if (row[`Input ${i}`] && row[`No. ${i}`]) {
+                        inputs.push({ name: row[`Input ${i}`], qty: parseFloat(row[`No. ${i}`]) });
                     }
                 }
                 let outputs = [];
                 for (let i = 1; i <= 2; i++) {
-                    if (row[`Output ${i}`] && row[`No.`]) {
-                        outputs.push({ name: row[`Output ${i}`], qty: parseFloat(row[`No.`]) });
+                    if (row[`Output ${i}`] && row[`oNo. ${i}`]) {
+                        outputs.push({ name: row[`Output ${i}`], qty: parseFloat(row[`oNo. ${i}`]) });
                     }
                 }
                 outputs.forEach(output => {
                     if (!buildings[output.name]) buildings[output.name] = [];
                     buildings[output.name].push({ id: row.Building, inputs, output });
                 });
+                console.log("CREATED "+JSON.stringify(row));
             });
             populateResourceDropdown();
         }
@@ -145,7 +147,7 @@
             d.fy = null;
         }
 
-        fetch("building.csv")
+        fetch("https://raw.githubusercontent.com/lestofante/WorkerAndResourceCalculator/refs/heads/development/building.csv")
             .then(response => response.text())
             .then(data => parseCSV(data));
     </script>
