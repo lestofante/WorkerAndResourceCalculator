@@ -64,7 +64,7 @@
         <input type="checkbox" id="ShowPowerPlant">Show power plant</checkbox>
         <button onclick="updateGraph()">Generate</button>
         <button onclick="clearSelections()">Clear Selections</button>
-        <div id="extraMessages"><h3>MESSAGES</h3></div>
+        <div id="extraMessages"><h3>MESSAGES</h3>Note: an efficiency of 230% means you need 3 building, but you will have a 70% extra production if all work full efficiency</div>
     </div>
     <div id="buildingSelection">
         <h3>Select Building</h3>
@@ -382,7 +382,7 @@
             const linkInfo = { name: resource, qty: parseFloat(quantityResourceSelect), dst: id };
             await processResource(resource, parseFloat(quantityResourceSelect), linkInfo);
 
-            let htmlString = '<ul>';  // Start an unordered list
+            let htmlString = 'Extra resource not shown:<ul>';  // Start an unordered list
             unknownResourceBuildings.forEach((value, key) => {
                 htmlString += `
                     <li>
