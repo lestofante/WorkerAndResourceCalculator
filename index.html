@@ -17,21 +17,22 @@
 </head>
 <body>
     <div id="controls">
-        <label for="resource">Select Resource:</label>
+        <label for="resource">Select Resource and quantity:</label>
         <select id="resource"></select>
+        <input id="quantity" type="number"></input>
         <button onclick="updateGraph()">Generate</button>
     </div>
     <svg width="100%" height="100%"></svg>
     <script>
         const width = window.innerWidth, height = window.innerHeight;
         const svg = d3.select("svg").attr("width", width).attr("height", height);
-        let buildings = {};
+        let buildingsMapByOutput = {};
 
         function parseCSV(data) {
-            buildings = {};
-            const parsedData = Papa.parse(data, { header: true, skipEmptyLines: true, delimiter: "\t" }).data;
+            buildingsMapByOutput = {};
+            const parsedData = Papa.parse(data, { header: true, skipEmptyLines: true, delimiter: ";" }).data;
             parsedData.forEach(row => {
-console.log("found "+JSON.stringify(row));
+                //console.log("found "+JSON.stringify(row));
                 let inputs = [];
                 for (let i = 1; i <= 5; i++) {
                     if (row[`Input ${i}`] && row[`No. ${i}`]) {
@@ -45,10 +46,10 @@ console.log("found "+JSON.stringify(row));
                     }
                 }
                 outputs.forEach(output => {
-                    if (!buildings[output.name]) buildings[output.name] = [];
-                    buildings[output.name].push({ id: row.Building, inputs, output });
+                    if (!buildingsMapByOutput[output.name]) buildingsMapByOutput[output.name] = [];
+                    buildingsMapByOutput[output.name].push({ id: row.Building, inputs, output });
                 });
-                console.log("CREATED "+JSON.stringify(row));
+                //console.log("CREATED "+JSON.stringify(row));
             });
             populateResourceDropdown();
         }
@@ -56,7 +57,7 @@ console.log("found "+JSON.stringify(row));
         function populateResourceDropdown() {
             const resourceSelect = document.getElementById("resource");
             resourceSelect.innerHTML = "";
-            Object.keys(buildings).forEach(resource => {
+            Object.keys(buildingsMapByOutput).sort().forEach(resource => {
                 let option = document.createElement("option");
                 option.value = resource;
                 option.textContent = resource;
@@ -64,29 +65,83 @@ console.log("found "+JSON.stringify(row));
             });
         }
 
-        function generateData(resource) {
+        function generateData(resource, quantityResourceSelect) {
             const nodes = [], links = [];
-            const factoryCount = 10;
+            const visited = new Set();
 
-            buildings[resource].forEach(building => {
-                nodes.push({ id: building.id, width: 140, height: 40 });
-                building.inputs.forEach(input => {
-                    const inputId = `${input.name}`;
-                    if (!nodes.find(n => n.id === inputId)) {
-                        nodes.push({ id: inputId, width: 100, height: 40 });
+            function processResource(res, qty, linkInfo) {
+                console.log("processResource test "+res);
+                if (visited.has(res)) return;
+                visited.add(res);
+                console.log("processResource "+res);
+
+                const building = buildingsMapByOutput[res]?.[0];
+                if (building){
+                    console.log("BUILD FOUND "+building.id + " prod: " + building.output.qty +  " caller "+linkInfo);
+
+                    const numberOfBuilding = Math.ceil(qty / building.output.qty);
+
+                    nodes.push({ id: building.id, label: building.id + " x " + numberOfBuilding, width: 140, height: 40 });
+
+                    if (linkInfo){
+                        console.log("LINK ADDED " + building.id + " " + linkInfo.dst);
+                        links.push({ source: building.id, target: linkInfo.dst, label: `${linkInfo.name} x ${linkInfo.qty}` });
                     }
-                    links.push({ source: inputId, target: building.id, label: `${input.qty * factoryCount} ${input.name}` });
-                });
-            });
+
+                    building.inputs.forEach(input => {
+
+                        const inputId = input.name;
+                        console.log("INPUT FOUND "+inputId);
+
+                        const requiredInput = (input.qty / building.output.qty) * qty;  //scale the input based on the requested output
+
+                        const linkInfo = { name: input.name, qty: requiredInput, dst: building.id };
+
+                        //if (!nodes.find(n => n.id === inputId)) {
+                        //    nodes.push({ id: inputId, label: `${input.name} x ${numberOfBuilding}`, width: 100, height: 40 });
+                        //    console.log("NODE ADDED "+inputId);
+                        //}
+                        //links.push({ source: inputId, target: building.id, label: `${input.name} x ${qty}` });
+                        //console.log("LINK ADDED " + inputId + " " + building.id);
+
+                        processResource(input.name, requiredInput, linkInfo);
+                    });
+                }
+            }
+
+            const id = `OUTPUT: ${resource} ${quantityResourceSelect}`;
+            const linkInfo = { name: resource, qty: quantityResourceSelect, dst: id };
+            nodes.push({ id: id, label: id, width: 140, height: 40, color: "red" });
+            processResource(resource, quantityResourceSelect, linkInfo);
             return { nodes, links };
         }
 
+        // function generateData(resource, quantityResourceSelect) {
+        //     const nodes = [], links = [];
+        //     const factoryCount = 10;
+        //
+        //     buildingsMapByOutput[resource].forEach(building => {
+        //         nodes.push({ id: building.id, width: 140, height: 40 });
+        //         building.inputs.forEach(input => {
+        //             const inputId = `${input.name}`;
+        //             if (!nodes.find(n => n.id === inputId)) {
+        //                 nodes.push({ id: inputId, width: 100, height: 40 });
+        //             }
+        //             links.push({ source: inputId, target: building.id, label: `${input.qty * factoryCount} ${input.name}` });
+        //         });
+        //     });
+        //     return { nodes, links };
+        // }
+        var simulation = {};
+
         function updateGraph() {
             const selectedResource = document.getElementById("resource").value;
-            const data = generateData(selectedResource);
+            const quantityResourceSelect = document.getElementById("quantity").value;
+
+            const data = generateData(selectedResource, quantityResourceSelect);
             svg.selectAll("*").remove();
 
-            const simulation = d3.forceSimulation(data.nodes)
+            simulation = d3.forceSimulation(data.nodes)
                 .force("link", d3.forceLink(data.links).id(d => d.id).distance(200))
                 .force("charge", d3.forceManyBody().strength(-500))
                 .force("center", d3.forceCenter(width / 2, height / 2));
@@ -109,10 +164,11 @@ console.log("found "+JSON.stringify(row));
                 .attr("width", d => d.width)
                 .attr("height", d => d.height)
                 .attr("x", d => -d.width / 2)
-                .attr("y", d => -d.height / 2);
+                .attr("y", d => -d.height / 2)
+                .style("fill",  d => d.color || "blue");
 
             node.append("text")
-                .text(d => d.id)
+                .text(d => d.label)
                 .attr("dy", 5);
 
             const linkLabels = svg.selectAll(".label")
