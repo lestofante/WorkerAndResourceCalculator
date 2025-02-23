@@ -4,60 +4,223 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Production Chain Calculator</title>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <style>
-        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
-        .node rect { fill: steelblue; rx: 20; ry: 20; cursor: grab; }
-        .link { stroke: black; stroke-width: 2px; }
-        text { font-size: 12px; text-anchor: middle; fill: white; }
-        .label { fill: black; font-size: 10px; }
-        #controls { position: absolute; top: 10px; left: 10px; background: white; padding: 10px; border-radius: 5px; }
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        #network {
+            width: 100%;
+            height: 100%;
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 1;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        #buildingSelection {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            display: none;
+            z-index: 2;
+        }
+        .building-option {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .building-option:hover {
+            background-color: #f0f0f0;
+        }
+        .building-option.selected {
+            background-color: #e0e0e0;
+            border-color: #999;
+        }
     </style>
 </head>
 <body>
     <div id="controls">
         <label for="resource">Select Resource and quantity:</label>
         <select id="resource"></select>
-        <input id="quantity" type="number"></input>
+        <input id="quantity" type="number" value="1">
+        <input type="checkbox" id="ShowPowerPlant">Show power plant</checkbox>
         <button onclick="updateGraph()">Generate</button>
+        <button onclick="clearSelections()">Clear Selections</button>
+        <div id="extraMessages"><h3>MESSAGES</h3></div>
     </div>
-    <svg width="100%" height="100%"></svg>
+    <div id="buildingSelection">
+        <h3>Select Building</h3>
+        <div id="buildingSelectionMessage"></div>
+        <div id="buildingOptions"></div>
+        <button onclick="confirmBuildingSelection()">Confirm</button>
+        <button onclick="cancelBuildingSelection()">Cancel</button>
+    </div>
+    <div id="network"></div>
     <script>
-        const width = window.innerWidth, height = window.innerHeight;
-        const svg = d3.select("svg").attr("width", width).attr("height", height);
-        let buildingsMapByOutput = {};
+        let buildingsMapById = {};
+        let resourceOutputMap = {};
+        let resourceInputMap = {};
+        let network = null;
+        let nodes = new vis.DataSet();
+        let edges = new vis.DataSet();
+        // Store selected buildings for each resource
+        let selectedBuildings = new Map();
+        let insertedBuildings = new Set();
+        let unknownResourceBuildings = new Map();
+
+        const options = {
+            nodes: {
+                shape: 'box',
+                margin: 10,
+                borderWidth: 2,
+                shadow: true,
+                color: {
+                    border: '#2B7CE9',
+                    background: 'steelblue'
+                },
+                font: {
+                    color: 'white',
+                    size: 14,
+                    face: 'arial'
+                }
+            },
+            edges: {
+                arrows: {
+                    to: {
+                        enabled: true,
+                        scaleFactor: 1
+                    }
+                },
+                font: {
+                    size: 12,
+                    align: 'horizontal',
+                    background: 'white'
+                },
+                color: {
+                    color: '#848484',
+                    inherit: false
+                },
+                smooth: {
+                    type: 'cubicBezier',
+                    forceDirection: 'horizontal',
+                    roundness: 0.4
+                }
+            },
+            physics: {
+                enabled: true,
+                hierarchicalRepulsion: {
+                    nodeDistance: 200,
+                    centralGravity: 0.2
+                },
+                solver: 'hierarchicalRepulsion',
+                stabilization: {
+                    iterations: 1000
+                }
+            },
+            layout: {
+                hierarchical: {
+                    direction: 'LR',
+                    sortMethod: 'directed',
+                    levelSeparation: 250,
+                    nodeSpacing: 200
+                }
+            }
+        };
+
+        function initNetwork() {
+            const container = document.getElementById('network');
+            network = new vis.Network(container, { nodes, edges }, options);
+        }
 
         function parseCSV(data) {
-            buildingsMapByOutput = {};
             const parsedData = Papa.parse(data, { header: true, skipEmptyLines: true, delimiter: ";" }).data;
+
             parsedData.forEach(row => {
-                //console.log("found "+JSON.stringify(row));
+                // Parse inputs
                 let inputs = [];
-                for (let i = 1; i <= 5; i++) {
-                    if (row[`Input ${i}`] && row[`No. ${i}`]) {
-                        inputs.push({ name: row[`Input ${i}`], qty: parseFloat(row[`No. ${i}`]) });
-                    }
+                let i = 1;
+                while (row[`Input ${i}`] && row[`No. ${i}`]) {
+                    inputs[row[`Input ${i}`]] = { name: row[`Input ${i}`], qty: parseFloat(row[`No. ${i}`]) };
+                    i++;
                 }
+
+                // Parse outputs
                 let outputs = [];
-                for (let i = 1; i <= 2; i++) {
-                    if (row[`Output ${i}`] && row[`oNo. ${i}`]) {
-                        outputs.push({ name: row[`Output ${i}`], qty: parseFloat(row[`oNo. ${i}`]) });
-                    }
+                i = 1;
+                while (row[`Output ${i}`] && row[`oNo. ${i}`]) {
+                    outputs[row[`Output ${i}`]] = { name: row[`Output ${i}`], qty: parseFloat(row[`oNo. ${i}`]) };
+                    i++;
                 }
-                outputs.forEach(output => {
-                    if (!buildingsMapByOutput[output.name]) buildingsMapByOutput[output.name] = [];
-                    buildingsMapByOutput[output.name].push({ id: row.Building, inputs, output });
+
+                if (row["Power Req"] && row["Power Req"] != '0'){
+                    //console.log(`Power Req for ${row.Building} is ${row["Power Req"]}`);
+                    inputs['Power'] = {name: 'Power', qty: parseFloat(row["Power Req"])};
+                }else{
+                    console.log(`NO Power Req for ${row.Building}`);
+                }
+                if (row["Water Req"] && row["Water Req"] != '0'){
+                    inputs['drinking water'] = {name: 'Drinking water', qty: parseFloat(row["Water Req"])};
+                }
+
+                if (row["Number of Workers"] && row["Number of Workers"] != '0'){
+                    inputs['workers'] = {name: 'Workers', qty: parseFloat(row["Number of Workers"])};
+                }
+
+                //inputs['extra water'] = row["Water Req"];
+                //inputs['workers'] = row["Number of Workers"];
+
+                const building = {
+                    id: row.Building,
+                    name: row.Building,
+                    inputs: inputs,
+                    outputs: outputs,
+                    water: row["Water Req"],
+                    workers: row["Number of Workers"]
+                };
+                console.dir(building, { depth: null, colors: true });
+
+                buildingsMapById[building.id] = building;
+
+                Object.keys(outputs).forEach(output => {
+                    if (!resourceOutputMap[output]) {
+                        resourceOutputMap[output] = [];
+                    }
+                    resourceOutputMap[output].push(building.id);
                 });
-                //console.log("CREATED "+JSON.stringify(row));
+
+                Object.keys(inputs).forEach(input => {
+                    if (!resourceInputMap[input]) {
+                        resourceInputMap[input] = [];
+                    }
+                    resourceInputMap[input].push(building.id);
+                });
             });
+
             populateResourceDropdown();
         }
 
         function populateResourceDropdown() {
             const resourceSelect = document.getElementById("resource");
             resourceSelect.innerHTML = "";
-            Object.keys(buildingsMapByOutput).sort().forEach(resource => {
+            Object.keys(resourceOutputMap).sort().forEach(resource => {
                 let option = document.createElement("option");
                 option.value = resource;
                 option.textContent = resource;
@@ -65,144 +228,183 @@
             });
         }
 
-        function generateData(resource, quantityResourceSelect) {
-            const nodes = [], links = [];
-            const visited = new Set();
-
-            function processResource(res, qty, linkInfo) {
-                console.log("processResource test "+res);
-                if (visited.has(res)) return;
-                visited.add(res);
-                console.log("processResource "+res);
-
-                const building = buildingsMapByOutput[res]?.[0];
-                if (building){
-                    console.log("BUILD FOUND "+building.id + " prod: " + building.output.qty +  " caller "+linkInfo);
-
-                    const numberOfBuilding = Math.ceil(qty / building.output.qty);
-
-                    nodes.push({ id: building.id, label: building.id + " x " + numberOfBuilding, width: 140, height: 40 });
-
-                    if (linkInfo){
-                        console.log("LINK ADDED " + building.id + " " + linkInfo.dst);
-                        links.push({ source: building.id, target: linkInfo.dst, label: `${linkInfo.name} x ${linkInfo.qty}` });
-                    }
-
-                    building.inputs.forEach(input => {
-
-                        const inputId = input.name;
-                        console.log("INPUT FOUND "+inputId);
-
-                        const requiredInput = (input.qty / building.output.qty) * qty;  //scale the input based on the requested output
-
-                        const linkInfo = { name: input.name, qty: requiredInput, dst: building.id };
-
-                        //if (!nodes.find(n => n.id === inputId)) {
-                        //    nodes.push({ id: inputId, label: `${input.name} x ${numberOfBuilding}`, width: 100, height: 40 });
-                        //    console.log("NODE ADDED "+inputId);
-                        //}
-                        //links.push({ source: inputId, target: building.id, label: `${input.name} x ${qty}` });
-                        //console.log("LINK ADDED " + inputId + " " + building.id);
-
-                        processResource(input.name, requiredInput, linkInfo);
-                    });
-                }
-            }
-
-            const id = `OUTPUT: ${resource} ${quantityResourceSelect}`;
-            const linkInfo = { name: resource, qty: quantityResourceSelect, dst: id };
-            nodes.push({ id: id, label: id, width: 140, height: 40, color: "red" });
-            processResource(resource, quantityResourceSelect, linkInfo);
-            return { nodes, links };
+        function clearSelections() {
+            selectedBuildings.clear();
+            updateGraph();
         }
 
-        // function generateData(resource, quantityResourceSelect) {
-        //     const nodes = [], links = [];
-        //     const factoryCount = 10;
-        //
-        //     buildingsMapByOutput[resource].forEach(building => {
-        //         nodes.push({ id: building.id, width: 140, height: 40 });
-        //         building.inputs.forEach(input => {
-        //             const inputId = `${input.name}`;
-        //             if (!nodes.find(n => n.id === inputId)) {
-        //                 nodes.push({ id: inputId, width: 100, height: 40 });
-        //             }
-        //             links.push({ source: inputId, target: building.id, label: `${input.qty * factoryCount} ${input.name}` });
-        //         });
-        //     });
-        //     return { nodes, links };
-        // }
-        var simulation = {};
+        async function processResource(res, qty, linkInfo) {
+            let checkbox = document.getElementById('ShowPowerPlant');
+            let isChecked = checkbox.checked;
+            if (!isChecked && res == 'Power'){
+                console.log(`Power is disabled, fallback to text messages`);
+                const val = unknownResourceBuildings.get(res);
+                if (val){
+                    unknownResourceBuildings.set(res, val + qty);
+                }else{
+                    unknownResourceBuildings.set(res, qty);
+                }
+                return;
+            }
+            console.log(`processResource ${res} ${qty}`);
+            const buildings = resourceOutputMap[res] || [];
+
+            if (buildings.length === 0) {
+                //unknown production building
+                console.log(`processResource ${res} building missing, fallback to text messages`);
+                const val = unknownResourceBuildings.get(res);
+                if (val){
+                    unknownResourceBuildings.set(res, val + qty);
+                }else{
+                    unknownResourceBuildings.set(res, qty);
+                }
+                return;
+            }
+
+            // If there's only one option or we've already selected this resource
+            if (buildings.length === 1 || selectedBuildings.has(res)) {
+                const buildingId = buildings.length === 1 ? buildings[0] : selectedBuildings.get(res);
+                await processResourceWithBuilding(res, qty, linkInfo, buildingId);
+            } else {
+                console.log("Waiting for building selection...");
+                let buildingId = await showBuildingSelection(res, qty, linkInfo);
+                selectedBuildings.set(res, buildingId);
+                await processResourceWithBuilding(res, qty, linkInfo, buildingId);
+                console.log(`Selected building ${buildingId}`);
+            }
+        }
+
+        function showBuildingSelection(resource, qty, linkInfo) {
+            console.log(`showBuildingSelection for ${resource}`);
+            return new Promise(resolve => {
+                const buildings = resourceOutputMap[resource] || [];
+                const dialog = document.getElementById('buildingSelection');
+                const optionsContainer = document.getElementById('buildingOptions');
+                document.getElementById('buildingSelectionMessage').innerHTML = `To produce ${qty} of ${resource}`
+                optionsContainer.innerHTML = '';
+
+                buildings.forEach(buildingId => {
+                    const building = buildingsMapById[buildingId];
+                    const output = building.outputs[resource];
+                    const div = document.createElement('div');
+                    div.className = 'building-option';
+                    div.innerHTML = `
+                        <strong>${building.name}</strong><br>
+                        Produces: ${output.qty} ${resource}<br>
+                        Required buildings: ${Math.ceil(qty / output.qty)}<br>
+                        Power: ${building.power || 0}<br>
+                        Water: ${building.water || 0}<br>
+                        Workers: ${building.workers || 0}
+                    `;
+                    div.onclick = () => {
+                        document.querySelectorAll('.building-option').forEach(opt => opt.classList.remove('selected'));
+                        div.classList.add('selected');
+                        dialog.style.display = 'none'; // Hide dialog after selection
+                        console.log("showBuildingSelection SELECTED");
+                        resolve(buildingId); // Resolve when a selection is made
+                    };
+                    optionsContainer.appendChild(div);
+                });
+
+                dialog.style.display = 'block';
+                dialog.dataset.resource = resource;
+                dialog.dataset.quantity = qty;
+                dialog.dataset.linkInfo = JSON.stringify(linkInfo);
+            });
+        }
+
+        function cancelBuildingSelection() {
+            document.getElementById('buildingSelection').style.display = 'none';
+        }
+
+        async function processResourceWithBuilding(res, qty, linkInfo, selectedBuildingId) {
+            console.log(`processResourceWithBuilding ${res} ${qty} -  ${selectedBuildingId}`);
+            if (selectedBuildingId) {
+                const building = buildingsMapById[selectedBuildingId];
+                const numberOfBuilding = Math.ceil(qty / building.outputs[res].qty);
+
+                if (!insertedBuildings.has(building.id)){
+                    insertedBuildings.add(building.id);
+                    nodes.add({
+                        id: building.id,
+                        label: `${building.id}\nx${numberOfBuilding}`,
+                        color: {
+                            background: 'steelblue',
+                            border: '#2B7CE9'
+                        }
+                    });
+                }
+
+                if (linkInfo) {
+                    edges.add({
+                        from: building.id,
+                        to: linkInfo.dst,
+                        label: `${linkInfo.name}\nx${linkInfo.qty.toFixed(1)}`
+                    });
+                }
+
+                // Process inputs recursively
+                for (let key in building.inputs) {
+                    console.log(`processResourceWithBuilding ${selectedBuildingId} INPUT found: ${key}`);
+                    const input = building.inputs[key];
+                    const requiredInput = (input.qty / building.outputs[res].qty) * qty;
+                    const newLinkInfo = { name: input.name, qty: requiredInput, dst: building.id };
+                    await processResource(input.name, requiredInput, newLinkInfo);
+                }
+            }else{
+                //unknown production building
+                console.log(`processResourceWithBuilding ${selectedBuildingId} INPUT found: ${key}`);
+                const val = unknownResourceBuildings.get(res);
+                if (val){
+                    unknownResourceBuildings.set(res, val + qty);
+                }else{
+                    unknownResourceBuildings.set(res, qty);
+                }
+            }
+        }
+
+        async function generateData(resource, quantityResourceSelect) {
+            nodes.clear();
+            edges.clear();
+            insertedBuildings = new Set();
+            unknownResourceBuildings = new Map();
+
+            const id = `OUTPUT: ${resource}\nx${quantityResourceSelect}`;
+            nodes.add({
+                id: id,
+                label: id,
+                color: {
+                    background: '#FF4444',
+                    border: '#CC0000'
+                }
+            });
+
+            const linkInfo = { name: resource, qty: parseFloat(quantityResourceSelect), dst: id };
+            await processResource(resource, parseFloat(quantityResourceSelect), linkInfo);
+
+            let htmlString = '<ul>';  // Start an unordered list
+            unknownResourceBuildings.forEach((value, key) => {
+                htmlString += `
+                    <li>
+                        <strong>${key}:</strong> ${value.toFixed(2)} units
+                    </li>
+                `;
+            });
+            htmlString += '</ul>';
+
+            document.getElementById("extraMessages").innerHTML = htmlString;
+        }
 
         function updateGraph() {
             const selectedResource = document.getElementById("resource").value;
             const quantityResourceSelect = document.getElementById("quantity").value;
-
-            const data = generateData(selectedResource, quantityResourceSelect);
-            svg.selectAll("*").remove();
-
-            simulation = d3.forceSimulation(data.nodes)
-                .force("link", d3.forceLink(data.links).id(d => d.id).distance(200))
-                .force("charge", d3.forceManyBody().strength(-500))
-                .force("center", d3.forceCenter(width / 2, height / 2));
-
-            const link = svg.selectAll(".link")
-                .data(data.links)
-                .enter().append("line")
-                .attr("class", "link");
-
-            const node = svg.selectAll(".node")
-                .data(data.nodes)
-                .enter().append("g")
-                .attr("class", "node")
-                .call(d3.drag()
-                    .on("start", dragStarted)
-                    .on("drag", dragged)
-                    .on("end", dragEnded));
-
-            node.append("rect")
-                .attr("width", d => d.width)
-                .attr("height", d => d.height)
-                .attr("x", d => -d.width / 2)
-                .attr("y", d => -d.height / 2)
-                .style("fill",  d => d.color || "blue");
-
-            node.append("text")
-                .text(d => d.label)
-                .attr("dy", 5);
-
-            const linkLabels = svg.selectAll(".label")
-                .data(data.links)
-                .enter().append("text")
-                .attr("class", "label")
-                .text(d => d.label);
-
-            simulation.on("tick", () => {
-                link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
-                    .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
-                node.attr("transform", d => `translate(${d.x},${d.y})`);
-                linkLabels.attr("x", d => (d.source.x + d.target.x) / 2)
-                    .attr("y", d => (d.source.y + d.target.y) / 2);
-            });
+            generateData(selectedResource, quantityResourceSelect);
+            network.stabilize();
+            network.fit();
         }
 
-        function dragStarted(event, d) {
-            if (!event.active) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x;
-            d.fy = d.y;
-        }
-
-        function dragged(event, d) {
-            d.fx = event.x;
-            d.fy = event.y;
-        }
-
-        function dragEnded(event, d) {
-            if (!event.active) simulation.alphaTarget(0);
-            d.fx = null;
-            d.fy = null;
-        }
-
+        // Initialize
+        initNetwork();
         fetch("https://raw.githubusercontent.com/lestofante/WorkerAndResourceCalculator/refs/heads/development/building.csv")
             .then(response => response.text())
             .then(data => parseCSV(data));
